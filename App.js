@@ -27,6 +27,7 @@ const COLORS = {
 };
 
 const LOCATION_REFRESH_MS = 15000;
+const FALLBACK_COORDS = { lat: 51.5074, lng: -0.1278 };
 
 const Header = () => (
   <View style={styles.header}>
@@ -198,18 +199,24 @@ export default function App() {
           <View style={styles.currentLocationRow}>
             <MaterialCommunityIcons name="crosshairs-gps" size={16} color={COLORS.accent} />
             <Text style={styles.currentLocationText}>
-              {currentLocation.lat.toFixed(5)}, {currentLocation.lng.toFixed(5)}
+              {locationData
+                ? `${locationData.coords.lat.toFixed(5)}, ${locationData.coords.lng.toFixed(5)}`
+                : locationError || 'Location unavailable'}
             </Text>
           </View>
-          <TouchableOpacity style={styles.refreshLocationButton} onPress={bumpCurrentLocation}>
-            <Text style={styles.refreshLocationText}>Update location</Text>
+          <TouchableOpacity
+            style={styles.mapRefreshLocationButton}
+            onPress={() => refreshLocationData({ showLoading: true })}
+            disabled={isLocating || isSubmitting}
+          >
+            <Text style={styles.mapRefreshLocationText}>Update location</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.mapFrame}>
           {Platform.OS === 'web' ? (
             <iframe
-              src={getMapEmbedUrl(currentLocation)}
+              src={getMapEmbedUrl(locationData?.coords || FALLBACK_COORDS)}
               title="Current location map"
               style={{ width: '100%', height: '100%', border: 0 }}
             />
@@ -324,7 +331,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  refreshLocationButton: {
+  mapRefreshLocationButton: {
     backgroundColor: 'rgba(99, 102, 241, 0.15)',
     borderWidth: 1,
     borderColor: COLORS.accent,
@@ -332,7 +339,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  refreshLocationText: {
+  mapRefreshLocationText: {
     color: COLORS.accent,
     fontSize: 12,
     fontWeight: '600',
