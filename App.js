@@ -103,6 +103,7 @@ const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
     body { background: #0f172a; }
     #map { filter: saturate(0.65) contrast(0.95) brightness(1.02); }
     .marker-user {
+      position: relative;
       background: #0ea5e9;
       border: 2px solid #fff;
       border-radius: 999px;
@@ -111,14 +112,60 @@ const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
       transform: translate(-50%, -50%);
     }
+    .marker-user::after {
+      content: '';
+      position: absolute;
+      inset: -14px;
+      border-radius: 999px;
+      border: 3px solid rgba(14, 165, 233, 0.55);
+      animation: userPulse 1.6s ease-out infinite;
+    }
     .marker-msg {
-      width: 16px;
-      height: 16px;
+      position: relative;
+      width: 22px;
+      height: 30px;
+      box-sizing: border-box;
+      transform: translate(-50%, -100%);
+    }
+    .marker-msg::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
       background: #ef4444;
       border: 2px solid #fff;
-      border-radius: 999px;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-      transform: translate(-50%, -50%);
+      transform: translateX(-50%);
+    }
+    .marker-msg::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 10px solid #ef4444;
+      filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
+    }
+    @keyframes userPulse {
+      0% {
+        transform: scale(0.8);
+        opacity: 0.9;
+      }
+      70% {
+        transform: scale(1.9);
+        opacity: 0;
+      }
+      100% {
+        transform: scale(1.9);
+        opacity: 0;
+      }
     }
   </style>
 </head>
@@ -146,9 +193,10 @@ const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
         icon: L.divIcon({
           className: m.type === 'current' ? 'marker-user' : 'marker-msg',
           html: '',
-          iconSize: m.type === 'current' ? [18, 18] : [16, 16],
-          iconAnchor: m.type === 'current' ? [9, 9] : [8, 8],
+          iconSize: m.type === 'current' ? [18, 18] : [22, 30],
+          iconAnchor: m.type === 'current' ? [9, 9] : [11, 30],
         }),
+        zIndexOffset: m.type === 'current' ? 1000 : 0,
       }).addTo(map);
 
       bounds.push([m.lat, m.lng]);
