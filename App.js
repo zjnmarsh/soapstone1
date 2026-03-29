@@ -26,14 +26,15 @@ const COLORS = {
   border: '#334155',     // Slate 700
 };
 
-const LOCATION_REFRESH_MS = 15000;
-const MAX_SOAPSTONE_DISTANCE_METERS = 20;
+const LOCATION_REFRESH_MS = 2000; // for testing, normally 1500
+const MAX_SOAPSTONE_DISTANCE_METERS = 40;
+const MAP_VIEW_DISTANCE_METERS = 40;
 const FALLBACK_COORDS = { lat: 51.5074, lng: -0.1278 };
 
 const Header = () => (
   <View style={styles.header}>
     <MaterialCommunityIcons name="mountain" size={28} color={COLORS.accent} />
-    <Text style={styles.headerTitle}>Soapstone Connect</Text>
+    <Text style={styles.headerTitle}>Echo</Text>
     <View style={{ width: 28 }} />
   </View>
 );
@@ -44,6 +45,8 @@ const isValidCoordinate = (coordinate) => (
   && Math.abs(coordinate.lat) <= 90
   && Math.abs(coordinate.lng) <= 180
 );
+
+const degreesPerMeter = 1 / 111320;
 
 const getDistanceMeters = (from, to) => {
   const earthRadiusMeters = 6371000;
@@ -185,6 +188,13 @@ const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
       subdomains: 'abcd',
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
     }).addTo(map);
+
+    const viewportDeltaDegrees = ${MAP_VIEW_DISTANCE_METERS} * ${degreesPerMeter};
+    const viewportBounds = [
+      [center.lat - viewportDeltaDegrees, center.lng - viewportDeltaDegrees],
+      [center.lat + viewportDeltaDegrees, center.lng + viewportDeltaDegrees],
+    ];
+    map.fitBounds(viewportBounds, { padding: [20, 20], maxZoom: 18 });
 
     const bounds = [];
 
@@ -455,7 +465,7 @@ export default function App() {
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder="Place a soapstone message..."
+            placeholder="Leave an echo"
             placeholderTextColor={COLORS.muted}
             value={message}
             onChangeText={setMessage}
