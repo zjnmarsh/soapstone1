@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { getSoapstones, addSoapstone, upvoteSoapstone } from './firebase';
+import { getSoapstones, addSoapstone, upvoteSoapstone, addReaction, removeReaction } from './firebase';
 
 const COLORS = {
   background: '#0F172A', // Slate 900
@@ -28,14 +28,26 @@ const COLORS = {
 
 const LOCATION_REFRESH_MS = 2000; // for testing, normally 1500
 const MAX_SOAPSTONE_DISTANCE_METERS = 40;
-const MAP_VIEW_DISTANCE_METERS = 40;
+const MAP_VIEW_DISTANCE_METERS = 50;
 const FALLBACK_COORDS = { lat: 51.5074, lng: -0.1278 };
 
-const Header = () => (
+const Header = ({ username, onOpenSignIn }) => (
   <View style={styles.header}>
     <MaterialCommunityIcons name="mountain" size={28} color={COLORS.accent} />
     <Text style={styles.headerTitle}>Echo</Text>
-    <View style={{ width: 28 }} />
+    <TouchableOpacity style={styles.signInButton} onPress={onOpenSignIn}>
+      {username ? (
+        <>
+          <MaterialCommunityIcons name="account" size={16} color={COLORS.accent} />
+          <Text style={styles.signInButtonText}>{username}</Text>
+        </>
+      ) : (
+        <>
+          <MaterialCommunityIcons name="login" size={16} color={COLORS.accent} />
+          <Text style={styles.signInButtonText}>Sign In</Text>
+        </>
+      )}
+    </TouchableOpacity>
   </View>
 );
 
@@ -220,19 +232,50 @@ const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
 </html>`;
 };
 
-const SoapstoneCard = ({ item }) => {
+const SoapstoneCard = ({ item, currentUsername }) => {
   const dateStr = item.datetime ? item.datetime.toLocaleString() : 'Just now';
+  const userLikes = item.reactions?.likes || {};
+  const userDislikes = item.reactions?.dislikes || {};
+  const likeCount = Object.keys(userLikes).length;
+  const dislikeCount = Object.keys(userDislikes).length;
+  const userLiked = userLikes[currentUsername];
+  const userDisliked = userDislikes[currentUsername];
+  
+  const handleLike = async () => {
+    if (!currentUsername) {
+      alert('Please sign in first');
+      return;
+    }
+    if (userLiked) {
+      await removeReaction(item.id, currentUsername, 'like');
+    } else {
+      await addReaction(item.id, currentUsername, 'like');
+    }
+  };
+  
+  const handleDislike = async () => {
+    if (!currentUsername) {
+      alert('Please sign in first');
+      return;
+    }
+    if (userDisliked) {
+      await removeReaction(item.id, currentUsername, 'dislike');
+    } else {
+      await addReaction(item.id, currentUsername, 'dislike');
+    }
+  };
   
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.locationContainer}>
+          <MaterialCommunityIcons name="account" size={14} color={COLORS.muted} />
+          <Text style={styles.locationText}>{item.username || 'Anonymous'}</Text>
+          <Text style={styles.locationSeparator}>•</Text>
           <MaterialCommunityIcons name="map-marker" size={14} color={COLORS.muted} />
           <Text style={styles.locationText}>
             {item.coordinate?.lat?.toFixed(4)}, {item.coordinate?.lng?.toFixed(4)}
           </Text>
-          <MaterialCommunityIcons style={{marginLeft: 8}} name="image-filter-hdr" size={14} color={COLORS.muted} />
-          <Text style={styles.locationText}>{item.elevation}m</Text>
         </View>
         <Text style={styles.dateText}>{dateStr}</Text>
       </View>
@@ -241,11 +284,18 @@ const SoapstoneCard = ({ item }) => {
       
       <View style={styles.cardFooter}>
         <TouchableOpacity 
-          style={styles.upvoteButton} 
-          onPress={() => upvoteSoapstone(item.id)}
+          style={[styles.reactionButton, userLiked && styles.reactionButtonActive]}
+          onPress={handleLike}
         >
-          <MaterialCommunityIcons name="arrow-up-bold" size={20} color={COLORS.accent} />
-          <Text style={styles.upvoteText}>{item.upvotes || 0}</Text>
+          <MaterialCommunityIcons name="thumb-up" size={16} color={userLiked ? COLORS.success : COLORS.muted} />
+          <Text style={[styles.reactionText, userLiked && styles.reactionTextActive]}>{likeCount}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.reactionButton, userDisliked && styles.reactionButtonActive]}
+          onPress={handleDislike}
+        >
+          <MaterialCommunityIcons name="thumb-down" size={16} color={userDisliked ? '#ef4444' : COLORS.muted} />
+          <Text style={[styles.reactionText, userDisliked && { color: '#ef4444' }]}>{dislikeCount}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -260,6 +310,9 @@ export default function App() {
   const [locationData, setLocationData] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [username, setUsername] = useState('');
+  const [signInUsername, setSignInUsername] = useState('');
+  const [showSignInModal, setShowSignInModal] = useState(false);
 
   useEffect(() => {
     // Note: This will only work after you add valid Firebase credentials in firebase.js
@@ -336,8 +389,27 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, [refreshLocationData]);
 
+  const handleSignIn = () => {
+    const trimmedUsername = signInUsername.trim();
+    if (!trimmedUsername) {
+      alert('Please enter a username');
+      return;
+    }
+    setUsername(trimmedUsername);
+    setSignInUsername('');
+    setShowSignInModal(false);
+  };
+
+  const handleSignOut = () => {
+    setUsername('');
+  };
+
   const handleSubmit = async () => {
     if (!message.trim()) return;
+    if (!username) {
+      alert('Please sign in first');
+      return;
+    }
     
     setIsSubmitting(true);
     try {
@@ -350,7 +422,7 @@ export default function App() {
 
       const { coords, elevation } = latestLocationData;
       
-      await addSoapstone(message, coords, elevation);
+      await addSoapstone(message, coords, elevation, username);
       setMessage('');
     } catch (error) {
       if (error?.message === 'Location permission denied') {
@@ -385,7 +457,37 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
-      <Header />
+      <Header username={username} onOpenSignIn={() => setShowSignInModal(true)} />
+
+      {showSignInModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Sign In</Text>
+              <TouchableOpacity onPress={() => setShowSignInModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>Enter your username to post echoes</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Username"
+              placeholderTextColor={COLORS.muted}
+              value={signInUsername}
+              onChangeText={setSignInUsername}
+              maxLength={30}
+            />
+            <TouchableOpacity style={styles.modalButton} onPress={handleSignIn}>
+              <Text style={styles.modalButtonText}>Sign In</Text>
+            </TouchableOpacity>
+            {username && (
+              <TouchableOpacity style={[styles.modalButton, styles.signOutButton]} onPress={handleSignOut}>
+                <Text style={styles.signOutButtonText}>Sign Out</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
 
       <View style={styles.mapSection}>
         <View style={styles.mapFrame}>
@@ -422,7 +524,7 @@ export default function App() {
           <FlatList
             data={nearbySoapstones}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <SoapstoneCard item={item} />}
+            renderItem={({ item }) => <SoapstoneCard item={item} currentUsername={username} />}
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
@@ -472,9 +574,9 @@ export default function App() {
             multiline
           />
           <TouchableOpacity 
-            style={[styles.sendButton, (!message.trim() || !locationData || isLocating) && styles.sendButtonDisabled]} 
+            style={[styles.sendButton, (!message.trim() || !locationData || isLocating || !username) && styles.sendButtonDisabled]} 
             onPress={handleSubmit}
-            disabled={!message.trim() || !locationData || isSubmitting || isLocating}
+            disabled={!message.trim() || !locationData || isSubmitting || isLocating || !username}
           >
             {isSubmitting ? (
               <ActivityIndicator size="small" color="#fff" />
@@ -569,6 +671,92 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.5,
   },
+  signInButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  signInButtonText: {
+    color: COLORS.accent,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    marginBottom: 16,
+  },
+  modalInput: {
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: COLORS.text,
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  modalButton: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  signOutButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderWidth: 1,
+    borderColor: '#ef4444',
+  },
+  signOutButtonText: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   listContent: {
     paddingVertical: 20,
     paddingBottom: 40,
@@ -601,6 +789,10 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
+  locationSeparator: {
+    color: COLORS.muted,
+    marginHorizontal: 6,
+  },
   dateText: {
     color: COLORS.muted,
     fontSize: 12,
@@ -614,9 +806,31 @@ const styles = StyleSheet.create({
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     paddingTop: 12,
+    gap: 8,
+  },
+  reactionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(148, 163, 184, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  reactionButtonActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+  },
+  reactionText: {
+    color: COLORS.muted,
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  reactionTextActive: {
+    color: COLORS.success,
   },
   upvoteButton: {
     flexDirection: 'row',

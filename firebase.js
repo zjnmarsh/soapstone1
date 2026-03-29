@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, Timestamp, updateDoc, doc, increment } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, Timestamp, updateDoc, doc, increment, getDoc } from 'firebase/firestore';
 
 // Replace with your project's Firebase configuration
 const firebaseConfig = {
@@ -30,17 +30,70 @@ export const getSoapstones = (callback) => {
   });
 };
 
-export const addSoapstone = async (message, coordinate, elevation) => {
+export const addSoapstone = async (message, coordinate, elevation, username = '') => {
   try {
     await addDoc(collection(db, COLLECTION_NAME), {
       message,
       coordinate, // { lat: number, lng: number }
       datetime: Timestamp.now(),
       elevation: Number(elevation) || 0,
-      upvotes: 0,
+      username: username || 'Anonymous',
+      reactions: {
+        likes: {},
+        dislikes: {},
+      },
     });
   } catch (error) {
     console.error("Error adding document: ", error);
+    throw error;
+  }
+};
+
+export const addReaction = async (id, username, reactionType) => {
+  const ref = doc(db, COLLECTION_NAME, id);
+  const reactionKey = reactionType === 'like' ? 'reactions.likes' : 'reactions.dislikes';
+  const otherKey = reactionType === 'like' ? 'reactions.dislikes' : 'reactions.likes';
+  
+  try {
+    // Add user to the reaction
+    await updateDoc(ref, {
+      [reactionKey]: {
+        ...((await getDoc(ref)).data()?.reactions?.[reactionType === 'like' ? 'likes' : 'dislikes'] || {}),
+        [username]: true,
+      },
+    });
+    
+    // Remove user from the opposite reaction if they had it
+    const docData = (await getDoc(ref)).data();
+    const oppositeReactions = docData?.reactions?.[reactionType === 'like' ? 'dislikes' : 'likes'] || {};
+    if (oppositeReactions[username]) {
+      const updatedOpposite = { ...oppositeReactions };
+      delete updatedOpposite[username];
+      await updateDoc(ref, {
+        [otherKey]: updatedOpposite,
+      });
+    }
+  } catch (error) {
+    console.error("Error adding reaction: ", error);
+    throw error;
+  }
+};
+
+export const removeReaction = async (id, username, reactionType) => {
+  const ref = doc(db, COLLECTION_NAME, id);
+  const reactionKey = reactionType === 'like' ? 'reactions.likes' : 'reactions.dislikes';
+  
+  try {
+    const docData = (await getDoc(ref)).data();
+    const reactions = docData?.reactions?.[reactionType === 'like' ? 'likes' : 'dislikes'] || {};
+    const updatedReactions = { ...reactions };
+    delete updatedReactions[username];
+    
+    await updateDoc(ref, {
+      [reactionKey]: updatedReactions,
+    });
+  } catch (error) {
+    console.error("Error removing reaction: ", error);
     throw error;
   }
 };
