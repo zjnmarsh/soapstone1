@@ -128,7 +128,10 @@ const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
   <script>
     const center = ${JSON.stringify(center)};
     const markers = ${JSON.stringify(markers)};
-    const map = L.map('map', { zoomControl: true }).setView([center.lat, center.lng], 14);
+    const map = L.map('map', {
+      zoomControl: false,
+      attributionControl: false,
+    }).setView([center.lat, center.lng], 14);
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
@@ -327,24 +330,6 @@ export default function App() {
       <Header />
 
       <View style={styles.mapSection}>
-        <View style={styles.mapHeaderRow}>
-          <View style={styles.currentLocationRow}>
-            <MaterialCommunityIcons name="crosshairs-gps" size={16} color={COLORS.accent} />
-            <Text style={styles.currentLocationText}>
-              {locationData
-                ? `${locationData.coords.lat.toFixed(5)}, ${locationData.coords.lng.toFixed(5)}`
-                : locationError || 'Location unavailable'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.mapRefreshLocationButton}
-            onPress={() => refreshLocationData({ showLoading: true })}
-            disabled={isLocating || isSubmitting}
-          >
-            <Text style={styles.mapRefreshLocationText}>Update location</Text>
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.mapFrame}>
           {Platform.OS === 'web' ? (
             <iframe
@@ -457,36 +442,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
-  },
-  mapHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    gap: 8,
-  },
-  currentLocationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  currentLocationText: {
-    color: COLORS.muted,
-    marginLeft: 6,
-    fontSize: 12,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  mapRefreshLocationButton: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-    borderWidth: 1,
-    borderColor: COLORS.accent,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  mapRefreshLocationText: {
-    color: COLORS.accent,
-    fontSize: 12,
-    fontWeight: '600',
   },
   mapFrame: {
     height: 220,
