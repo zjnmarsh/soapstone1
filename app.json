@@ -24,6 +24,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Soapstone Connect to use your location to attach coordinates and elevation to your messages."
+        }
+      ]
+    ]
   }
 }

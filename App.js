@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -13,6 +13,7 @@ import {
   StatusBar 
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { getSoapstones, addSoapstone, upvoteSoapstone } from './firebase';
 
 const COLORS = {
@@ -24,6 +25,8 @@ const COLORS = {
   success: '#10B981',    // Emerald 500
   border: '#334155',     // Slate 700
 };
+
+const LOCATION_REFRESH_MS = 15000;
 
 const Header = () => (
   <View style={styles.header}>
@@ -70,6 +73,9 @@ export default function App() {
   const [soapstones, setSoapstones] = useState([]);
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [locationData, setLocationData] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationError, setLocationError] = useState('');
 
   useEffect(() => {
     // Note: This will only work after you add valid Firebase credentials in firebase.js
@@ -86,22 +92,88 @@ export default function App() {
     }
   }, []);
 
+  const getCurrentLocationData = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+
+    if (status !== 'granted') {
+      throw new Error('Location permission denied');
+    }
+
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+
+    const coords = {
+      lat: location.coords.latitude,
+      lng: location.coords.longitude,
+    };
+
+    const elevation = Number.isFinite(location.coords.altitude)
+      ? Math.round(location.coords.altitude)
+      : 0;
+
+    return { coords, elevation };
+  };
+
+  const refreshLocationData = useCallback(async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setIsLocating(true);
+    }
+
+    try {
+      const currentLocationData = await getCurrentLocationData();
+      setLocationData(currentLocationData);
+      setLocationError('');
+      return currentLocationData;
+    } catch (error) {
+      setLocationData(null);
+      if (error?.message === 'Location permission denied') {
+        setLocationError('Location permission denied');
+      } else {
+        setLocationError('Unable to read current location');
+      }
+      return null;
+    } finally {
+      if (showLoading) {
+        setIsLocating(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshLocationData();
+  }, [refreshLocationData]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      refreshLocationData({ showLoading: false });
+    }, LOCATION_REFRESH_MS);
+
+    return () => clearInterval(intervalId);
+  }, [refreshLocationData]);
+
   const handleSubmit = async () => {
     if (!message.trim()) return;
     
     setIsSubmitting(true);
     try {
-      // Simulation of coordinate fetching or fixed for demo
-      const coords = { 
-        lat: 51.5074 + (Math.random() - 0.5) * 0.1, 
-        lng: -0.1278 + (Math.random() - 0.5) * 0.1 
-      };
-      const elevation = Math.floor(Math.random() * 500);
+      const latestLocationData = await refreshLocationData({ showLoading: false });
+
+      if (!latestLocationData) {
+        alert('Current location is unavailable. Please enable location and try again.');
+        return;
+      }
+
+      const { coords, elevation } = latestLocationData;
       
       await addSoapstone(message, coords, elevation);
       setMessage('');
     } catch (error) {
-      alert("Please ensure valid Firebase configuration in firebase.js");
+      if (error?.message === 'Location permission denied') {
+        alert('Location permission is required to post a soapstone.');
+      } else {
+        alert('Unable to get your location or save the soapstone. Check location settings and Firebase configuration.');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -135,6 +207,30 @@ export default function App() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.inputWrapper}
       >
+        <View style={styles.locationStatusRow}>
+          <View style={styles.locationStatusTextWrap}>
+            <MaterialCommunityIcons name="crosshairs-gps" size={14} color={locationData ? COLORS.success : COLORS.muted} />
+            {isLocating ? (
+              <Text style={styles.locationStatusText}>Getting location...</Text>
+            ) : locationData ? (
+              <Text style={styles.locationStatusText}>
+                {locationData.coords.lat.toFixed(5)}, {locationData.coords.lng.toFixed(5)} • {locationData.elevation}m
+              </Text>
+            ) : (
+              <Text style={[styles.locationStatusText, styles.locationStatusErrorText]}>
+                {locationError || 'Location unavailable'}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity
+            style={styles.refreshLocationButton}
+            onPress={refreshLocationData}
+            disabled={isLocating || isSubmitting}
+          >
+            <MaterialCommunityIcons name="refresh" size={16} color={COLORS.accent} />
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -145,9 +241,9 @@ export default function App() {
             multiline
           />
           <TouchableOpacity 
-            style={[styles.sendButton, !message.trim() && styles.sendButtonDisabled]} 
+            style={[styles.sendButton, (!message.trim() || !locationData || isLocating) && styles.sendButtonDisabled]} 
             onPress={handleSubmit}
-            disabled={!message.trim() || isSubmitting}
+            disabled={!message.trim() || !locationData || isSubmitting || isLocating}
           >
             {isSubmitting ? (
               <ActivityIndicator size="small" color="#fff" />
@@ -252,6 +348,37 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
     backgroundColor: COLORS.background,
     padding: 16,
+  },
+  locationStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  locationStatusTextWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  locationStatusText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginLeft: 6,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  locationStatusErrorText: {
+    color: '#F59E0B',
+  },
+  refreshLocationButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
   },
   inputContainer: {
     flexDirection: 'row',
