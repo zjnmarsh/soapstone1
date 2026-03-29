@@ -195,24 +195,6 @@ export default function App() {
       <Header />
 
       <View style={styles.mapSection}>
-        <View style={styles.mapHeaderRow}>
-          <View style={styles.currentLocationRow}>
-            <MaterialCommunityIcons name="crosshairs-gps" size={16} color={COLORS.accent} />
-            <Text style={styles.currentLocationText}>
-              {locationData
-                ? `${locationData.coords.lat.toFixed(5)}, ${locationData.coords.lng.toFixed(5)}`
-                : locationError || 'Location unavailable'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.mapRefreshLocationButton}
-            onPress={() => refreshLocationData({ showLoading: true })}
-            disabled={isLocating || isSubmitting}
-          >
-            <Text style={styles.mapRefreshLocationText}>Update location</Text>
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.mapFrame}>
           {Platform.OS === 'web' ? (
             <iframe
