@@ -27,6 +27,7 @@ const COLORS = {
 };
 
 const LOCATION_REFRESH_MS = 15000;
+const MAX_SOAPSTONE_DISTANCE_METERS = 20;
 const FALLBACK_COORDS = { lat: 51.5074, lng: -0.1278 };
 
 const Header = () => (
@@ -37,13 +38,128 @@ const Header = () => (
   </View>
 );
 
-const getMapEmbedUrl = ({ lat, lng }) => {
-  const delta = 0.0005;
-  const left = lng - delta;
-  const right = lng + delta;
-  const top = lat + delta;
-  const bottom = lat - delta;
-  return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${lat}%2C${lng}`;
+const isValidCoordinate = (coordinate) => (
+  Number.isFinite(coordinate?.lat)
+  && Number.isFinite(coordinate?.lng)
+  && Math.abs(coordinate.lat) <= 90
+  && Math.abs(coordinate.lng) <= 180
+);
+
+const getDistanceMeters = (from, to) => {
+  const earthRadiusMeters = 6371000;
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const deltaLat = toRadians(to.lat - from.lat);
+  const deltaLng = toRadians(to.lng - from.lng);
+  const fromLat = toRadians(from.lat);
+  const toLat = toRadians(to.lat);
+
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusMeters * c;
+};
+
+const getMapCenter = ({ currentCoords, soapstones }) => {
+  if (isValidCoordinate(currentCoords)) {
+    return currentCoords;
+  }
+
+  const firstSoapstoneCoord = soapstones
+    .map((item) => item.coordinate)
+    .find((coordinate) => isValidCoordinate(coordinate));
+
+  return firstSoapstoneCoord || FALLBACK_COORDS;
+};
+
+const getWebMapHtml = ({ center, currentCoords, soapstones }) => {
+  const soapstoneCoords = soapstones
+    .map((item) => item.coordinate)
+    .filter((coordinate) => isValidCoordinate(coordinate))
+    .slice(0, 200);
+
+  const markers = soapstoneCoords.map(({ lat, lng }) => ({
+    lat,
+    lng,
+    type: 'soapstone',
+  }));
+
+  if (isValidCoordinate(currentCoords)) {
+    markers.unshift({
+      lat: currentCoords.lat,
+      lng: currentCoords.lng,
+      type: 'current',
+    });
+  }
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    body { background: #0f172a; }
+    #map { filter: saturate(0.65) contrast(0.95) brightness(1.02); }
+    .marker-user {
+      background: #0ea5e9;
+      border: 2px solid #fff;
+      border-radius: 999px;
+      width: 18px;
+      height: 18px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      transform: translate(-50%, -50%);
+    }
+    .marker-msg {
+      width: 16px;
+      height: 16px;
+      background: #ef4444;
+      border: 2px solid #fff;
+      border-radius: 999px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      transform: translate(-50%, -50%);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const center = ${JSON.stringify(center)};
+    const markers = ${JSON.stringify(markers)};
+    const map = L.map('map', {
+      zoomControl: false,
+      attributionControl: false,
+    }).setView([center.lat, center.lng], 14);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+    }).addTo(map);
+
+    const bounds = [];
+
+    markers.forEach((m) => {
+      const marker = L.marker([m.lat, m.lng], {
+        icon: L.divIcon({
+          className: m.type === 'current' ? 'marker-user' : 'marker-msg',
+          html: '',
+          iconSize: m.type === 'current' ? [18, 18] : [16, 16],
+          iconAnchor: m.type === 'current' ? [9, 9] : [8, 8],
+        }),
+      }).addTo(map);
+
+      bounds.push([m.lat, m.lng]);
+    });
+
+    if (bounds.length > 1) {
+      map.fitBounds(bounds, { padding: [24, 24] });
+    }
+  </script>
+</body>
+</html>`;
 };
 
 const SoapstoneCard = ({ item }) => {
@@ -189,6 +305,25 @@ export default function App() {
     }
   };
 
+  const nearbySoapstones = soapstones.filter((item) => {
+    if (!isValidCoordinate(locationData?.coords) || !isValidCoordinate(item.coordinate)) {
+      return false;
+    }
+
+    return getDistanceMeters(locationData.coords, item.coordinate) <= MAX_SOAPSTONE_DISTANCE_METERS;
+  });
+
+  const mapCenter = getMapCenter({
+    currentCoords: locationData?.coords,
+    soapstones: nearbySoapstones,
+  });
+  const mappedSoapstonesCount = nearbySoapstones.length;
+  const mapHtml = getWebMapHtml({
+    center: mapCenter,
+    currentCoords: locationData?.coords,
+    soapstones: nearbySoapstones,
+  });
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
@@ -198,8 +333,8 @@ export default function App() {
         <View style={styles.mapFrame}>
           {Platform.OS === 'web' ? (
             <iframe
-              src={getMapEmbedUrl(locationData?.coords || FALLBACK_COORDS)}
-              title="Current location map"
+              srcDoc={mapHtml}
+              title="Soapstone map"
               style={{ width: '100%', height: '100%', border: 0 }}
             />
           ) : (
@@ -209,6 +344,17 @@ export default function App() {
             </View>
           )}
         </View>
+
+        <View style={styles.mapLegendRow}>
+          <View style={styles.mapLegendItem}>
+            <View style={styles.userLegendDot} />
+            <Text style={styles.mapLegendText}>You</Text>
+          </View>
+          <View style={styles.mapLegendItem}>
+            <View style={styles.messageLegendDot} />
+            <Text style={styles.mapLegendText}>Messages ({mappedSoapstonesCount})</Text>
+          </View>
+        </View>
       </View>
       
       <View style={styles.container}>
@@ -216,14 +362,14 @@ export default function App() {
           <ActivityIndicator size="large" color={COLORS.accent} style={{ flex: 1 }} />
         ) : (
           <FlatList
-            data={soapstones}
+            data={nearbySoapstones}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => <SoapstoneCard item={item} />}
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <MaterialCommunityIcons name="comment-text-multiple-outline" size={48} color={COLORS.border} />
-                <Text style={styles.emptyText}>No messages yet. Be the first!</Text>
+                <Text style={styles.emptyText}>No messages within {MAX_SOAPSTONE_DISTANCE_METERS}m.</Text>
               </View>
             }
           />
@@ -297,35 +443,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 8,
   },
-  mapHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  currentLocationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  currentLocationText: {
-    color: COLORS.muted,
-    marginLeft: 6,
-    fontSize: 12,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  mapRefreshLocationButton: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-    borderWidth: 1,
-    borderColor: COLORS.accent,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  mapRefreshLocationText: {
-    color: COLORS.accent,
-    fontSize: 12,
-    fontWeight: '600',
-  },
   mapFrame: {
     height: 220,
     borderRadius: 14,
@@ -342,6 +459,38 @@ const styles = StyleSheet.create({
   nativeFallbackText: {
     color: COLORS.muted,
     marginTop: 8,
+  },
+  mapLegendRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  mapLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  userLegendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#0ea5e9',
+    borderWidth: 1,
+    borderColor: '#fff',
+    marginRight: 6,
+  },
+  messageLegendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#ef4444',
+    borderWidth: 1,
+    borderColor: '#fff',
+    marginRight: 6,
+  },
+  mapLegendText: {
+    color: COLORS.muted,
+    fontSize: 12,
   },
   container: {
     flex: 1,
