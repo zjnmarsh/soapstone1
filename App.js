@@ -36,6 +36,15 @@ const Header = () => (
   </View>
 );
 
+const getMapEmbedUrl = ({ lat, lng }) => {
+  const delta = 0.0005;
+  const left = lng - delta;
+  const right = lng + delta;
+  const top = lat + delta;
+  const bottom = lat - delta;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${lat}%2C${lng}`;
+};
+
 const SoapstoneCard = ({ item }) => {
   const dateStr = item.datetime ? item.datetime.toLocaleString() : 'Just now';
   
@@ -183,6 +192,35 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
       <Header />
+
+      <View style={styles.mapSection}>
+        <View style={styles.mapHeaderRow}>
+          <View style={styles.currentLocationRow}>
+            <MaterialCommunityIcons name="crosshairs-gps" size={16} color={COLORS.accent} />
+            <Text style={styles.currentLocationText}>
+              {currentLocation.lat.toFixed(5)}, {currentLocation.lng.toFixed(5)}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.refreshLocationButton} onPress={bumpCurrentLocation}>
+            <Text style={styles.refreshLocationText}>Update location</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.mapFrame}>
+          {Platform.OS === 'web' ? (
+            <iframe
+              src={getMapEmbedUrl(currentLocation)}
+              title="Current location map"
+              style={{ width: '100%', height: '100%', border: 0 }}
+            />
+          ) : (
+            <View style={styles.nativeMapFallback}>
+              <MaterialCommunityIcons name="map-outline" size={24} color={COLORS.muted} />
+              <Text style={styles.nativeFallbackText}>Map preview is enabled on web.</Text>
+            </View>
+          )}
+        </View>
+      </View>
       
       <View style={styles.container}>
         {loading ? (
@@ -257,10 +295,64 @@ export default function App() {
   );
 }
 
+
+
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  mapSection: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  mapHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  currentLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  currentLocationText: {
+    color: COLORS.muted,
+    marginLeft: 6,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  refreshLocationButton: {
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  refreshLocationText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mapFrame: {
+    height: 220,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+  },
+  nativeMapFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nativeFallbackText: {
+    color: COLORS.muted,
+    marginTop: 8,
   },
   container: {
     flex: 1,
