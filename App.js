@@ -35,7 +35,7 @@ const USERNAME_STORAGE_KEY = 'echo.username';
 
 const Header = ({ username, onOpenSignIn }) => (
   <View style={styles.header}>
-    <Text style={styles.headerTitle}>Echo</Text>
+    <Text style={styles.headerTitle}>Echolocator</Text>
     <TouchableOpacity style={styles.signInButton} onPress={onOpenSignIn}>
       {username ? (
         <>
