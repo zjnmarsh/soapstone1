@@ -7,14 +7,15 @@ import {
   TouchableOpacity, 
   FlatList, 
   ActivityIndicator, 
-  KeyboardAvoidingView, 
+  Keyboard,
   Platform, 
   SafeAreaView, 
   StatusBar 
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { getSoapstones, addSoapstone, upvoteSoapstone, addReaction, removeReaction } from './firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSoapstones, addSoapstone, addReaction, removeReaction } from './firebase';
 
 const COLORS = {
   background: '#0F172A', // Slate 900
@@ -26,14 +27,14 @@ const COLORS = {
   border: '#334155',     // Slate 700
 };
 
-const LOCATION_REFRESH_MS = 2000; // for testing, normally 1500
+const LOCATION_REFRESH_MS = 2000;
 const MAX_SOAPSTONE_DISTANCE_METERS = 40;
 const MAP_VIEW_DISTANCE_METERS = 50;
 const FALLBACK_COORDS = { lat: 51.5074, lng: -0.1278 };
+const USERNAME_STORAGE_KEY = 'echo.username';
 
 const Header = ({ username, onOpenSignIn }) => (
   <View style={styles.header}>
-    <MaterialCommunityIcons name="mountain" size={28} color={COLORS.accent} />
     <Text style={styles.headerTitle}>Echo</Text>
     <TouchableOpacity style={styles.signInButton} onPress={onOpenSignIn}>
       {username ? (
@@ -276,6 +277,9 @@ const SoapstoneCard = ({ item, currentUsername }) => {
           <Text style={styles.locationText}>
             {item.coordinate?.lat?.toFixed(4)}, {item.coordinate?.lng?.toFixed(4)}
           </Text>
+          <Text style={styles.locationSeparator}>•</Text>
+          <MaterialCommunityIcons name="image-filter-hdr" size={14} color={COLORS.muted} />
+          <Text style={styles.locationText}>{Math.round(item.elevation ?? 0)}m</Text>
         </View>
         <Text style={styles.dateText}>{dateStr}</Text>
       </View>
@@ -313,6 +317,8 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [signInUsername, setSignInUsername] = useState('');
   const [showSignInModal, setShowSignInModal] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [webKeyboardInset, setWebKeyboardInset] = useState(0);
 
   useEffect(() => {
     // Note: This will only work after you add valid Firebase credentials in firebase.js
@@ -329,8 +335,28 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const loadStoredUsername = async () => {
+      try {
+        const storedUsername = await AsyncStorage.getItem(USERNAME_STORAGE_KEY);
+        if (storedUsername) {
+          setUsername(storedUsername);
+        }
+      } catch (error) {
+        console.warn('Unable to load stored username.');
+      }
+    };
+
+    loadStoredUsername();
+  }, []);
+
   const getCurrentLocationData = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
+    let { status } = await Location.getForegroundPermissionsAsync();
+
+    if (status !== 'granted') {
+      const permissionResult = await Location.requestForegroundPermissionsAsync();
+      status = permissionResult.status;
+    }
 
     if (status !== 'granted') {
       throw new Error('Location permission denied');
@@ -363,7 +389,6 @@ export default function App() {
       setLocationError('');
       return currentLocationData;
     } catch (error) {
-      setLocationData(null);
       if (error?.message === 'Location permission denied') {
         setLocationError('Location permission denied');
       } else {
@@ -378,38 +403,139 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshLocationData();
+    let locationSubscription;
+
+    const startLocationWatch = async () => {
+      setIsLocating(true);
+      try {
+        const initialLocationData = await refreshLocationData({ showLoading: false });
+
+        if (!initialLocationData) {
+          return;
+        }
+
+        locationSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: LOCATION_REFRESH_MS,
+            distanceInterval: 1,
+          },
+          (location) => {
+            const coords = {
+              lat: location.coords.latitude,
+              lng: location.coords.longitude,
+            };
+
+            const elevation = Number.isFinite(location.coords.altitude)
+              ? Math.round(location.coords.altitude)
+              : 0;
+
+            setLocationData({ coords, elevation });
+            setLocationError('');
+          }
+        );
+      } catch (error) {
+        if (error?.message === 'Location permission denied') {
+          setLocationError('Location permission denied');
+        } else {
+          setLocationError('Unable to watch current location');
+        }
+      } finally {
+        setIsLocating(false);
+      }
+    };
+
+    startLocationWatch();
+
+    return () => {
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
   }, [refreshLocationData]);
 
   useEffect(() => {
-    const intervalId = setInterval(() => {
-      refreshLocationData({ showLoading: false });
-    }, LOCATION_REFRESH_MS);
+    const showEvent = 'keyboardDidShow';
+    const hideEvent = 'keyboardDidHide';
 
-    return () => clearInterval(intervalId);
-  }, [refreshLocationData]);
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event?.endCoordinates?.height || 0);
+    });
 
-  const handleSignIn = () => {
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return undefined;
+    }
+
+    const visualViewport = window.visualViewport;
+
+    const updateViewportMetrics = () => {
+      if (!visualViewport) {
+        setWebKeyboardInset(0);
+        return;
+      }
+
+      const layoutViewportHeight = document.documentElement.clientHeight;
+      const keyboardInset = Math.max(
+        0,
+        layoutViewportHeight - (visualViewport.height + visualViewport.offsetTop)
+      );
+      setWebKeyboardInset(keyboardInset);
+    };
+
+    updateViewportMetrics();
+
+    if (!visualViewport) {
+      return undefined;
+    }
+
+    visualViewport.addEventListener('resize', updateViewportMetrics);
+    visualViewport.addEventListener('scroll', updateViewportMetrics);
+
+    return () => {
+      visualViewport.removeEventListener('resize', updateViewportMetrics);
+      visualViewport.removeEventListener('scroll', updateViewportMetrics);
+    };
+  }, []);
+
+  const handleSignIn = async () => {
     const trimmedUsername = signInUsername.trim();
     if (!trimmedUsername) {
       alert('Please enter a username');
       return;
     }
-    setUsername(trimmedUsername);
-    setSignInUsername('');
-    setShowSignInModal(false);
+
+    try {
+      await AsyncStorage.setItem(USERNAME_STORAGE_KEY, trimmedUsername);
+      setUsername(trimmedUsername);
+      setSignInUsername('');
+      setShowSignInModal(false);
+    } catch (error) {
+      alert('Unable to save username. Please try again.');
+    }
   };
 
-  const handleSignOut = () => {
-    setUsername('');
+  const handleSignOut = async () => {
+    try {
+      await AsyncStorage.removeItem(USERNAME_STORAGE_KEY);
+      setUsername('');
+    } catch (error) {
+      alert('Unable to sign out right now. Please try again.');
+    }
   };
 
   const handleSubmit = async () => {
     if (!message.trim()) return;
-    if (!username) {
-      alert('Please sign in first');
-      return;
-    }
     
     setIsSubmitting(true);
     try {
@@ -421,8 +547,9 @@ export default function App() {
       }
 
       const { coords, elevation } = latestLocationData;
+      const postUsername = username || 'Anonymous';
       
-      await addSoapstone(message, coords, elevation, username);
+      await addSoapstone(message, coords, elevation, postUsername);
       setMessage('');
     } catch (error) {
       if (error?.message === 'Location permission denied') {
@@ -453,6 +580,8 @@ export default function App() {
     currentCoords: locationData?.coords,
     soapstones: nearbySoapstones,
   });
+  const mapRenderKey = `${locationData?.coords?.lat ?? 'na'}-${locationData?.coords?.lng ?? 'na'}-${mappedSoapstonesCount}`;
+  const isPostDisabled = !message.trim() || !locationData || isSubmitting || isLocating;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -489,56 +618,62 @@ export default function App() {
         </View>
       )}
 
-      <View style={styles.mapSection}>
-        <View style={styles.mapFrame}>
-          {Platform.OS === 'web' ? (
-            <iframe
-              srcDoc={mapHtml}
-              title="Soapstone map"
-              style={{ width: '100%', height: '100%', border: 0 }}
-            />
-          ) : (
-            <View style={styles.nativeMapFallback}>
-              <MaterialCommunityIcons name="map-outline" size={24} color={COLORS.muted} />
-              <Text style={styles.nativeFallbackText}>Map preview is enabled on web.</Text>
+      <View style={styles.contentArea}>
+        <View style={styles.mapSection}>
+          <View style={styles.mapFrame}>
+            {Platform.OS === 'web' ? (
+              <iframe
+                key={mapRenderKey}
+                srcDoc={mapHtml}
+                title="Soapstone map"
+                style={{ width: '100%', height: '100%', border: 0 }}
+              />
+            ) : (
+              <View style={styles.nativeMapFallback}>
+                <MaterialCommunityIcons name="map-outline" size={24} color={COLORS.muted} />
+                <Text style={styles.nativeFallbackText}>Map preview is enabled on web.</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.mapLegendRow}>
+            <View style={styles.mapLegendItem}>
+              <View style={styles.userLegendDot} />
+              <Text style={styles.mapLegendText}>You</Text>
             </View>
+            <View style={styles.mapLegendItem}>
+              <View style={styles.messageLegendDot} />
+              <Text style={styles.mapLegendText}>Echos ({mappedSoapstonesCount})</Text>
+            </View>
+          </View>
+        </View>
+        
+        <View style={styles.container}>
+          {loading ? (
+            <ActivityIndicator size="large" color={COLORS.accent} style={{ flex: 1 }} />
+          ) : (
+            <FlatList
+              data={nearbySoapstones}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => <SoapstoneCard item={item} currentUsername={username} />}
+              contentContainerStyle={styles.listContent}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <MaterialCommunityIcons name="comment-text-multiple-outline" size={48} color={COLORS.border} />
+                  <Text style={styles.emptyText}>No echos within {MAX_SOAPSTONE_DISTANCE_METERS}m.</Text>
+                </View>
+              }
+            />
           )}
         </View>
-
-        <View style={styles.mapLegendRow}>
-          <View style={styles.mapLegendItem}>
-            <View style={styles.userLegendDot} />
-            <Text style={styles.mapLegendText}>You</Text>
-          </View>
-          <View style={styles.mapLegendItem}>
-            <View style={styles.messageLegendDot} />
-            <Text style={styles.mapLegendText}>Messages ({mappedSoapstonesCount})</Text>
-          </View>
-        </View>
-      </View>
-      
-      <View style={styles.container}>
-        {loading ? (
-          <ActivityIndicator size="large" color={COLORS.accent} style={{ flex: 1 }} />
-        ) : (
-          <FlatList
-            data={nearbySoapstones}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <SoapstoneCard item={item} currentUsername={username} />}
-            contentContainerStyle={styles.listContent}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name="comment-text-multiple-outline" size={48} color={COLORS.border} />
-                <Text style={styles.emptyText}>No messages within {MAX_SOAPSTONE_DISTANCE_METERS}m.</Text>
-              </View>
-            }
-          />
-        )}
       </View>
 
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inputWrapper}
+      <View
+        style={[
+          styles.inputWrapper,
+          Platform.OS === 'web' && styles.webInputWrapper,
+          { bottom: Platform.OS === 'web' ? webKeyboardInset : keyboardHeight },
+        ]}
       >
         <View style={styles.locationStatusRow}>
           <View style={styles.locationStatusTextWrap}>
@@ -573,10 +708,10 @@ export default function App() {
             onChangeText={setMessage}
             multiline
           />
-          <TouchableOpacity 
-            style={[styles.sendButton, (!message.trim() || !locationData || isLocating || !username) && styles.sendButtonDisabled]} 
+          <TouchableOpacity
+            style={[styles.sendButton, isPostDisabled && styles.sendButtonDisabled]}
             onPress={handleSubmit}
-            disabled={!message.trim() || !locationData || isSubmitting || isLocating || !username}
+            disabled={isPostDisabled}
           >
             {isSubmitting ? (
               <ActivityIndicator size="small" color="#fff" />
@@ -585,7 +720,7 @@ export default function App() {
             )}
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -597,6 +732,12 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.background,
+    minHeight: 0,
+  },
+  contentArea: {
+    flex: 1,
+    paddingBottom: 112,
+    minHeight: 0,
   },
   mapSection: {
     paddingHorizontal: 16,
@@ -655,6 +796,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 16,
+    minHeight: 0,
   },
   header: {
     flexDirection: 'row',
@@ -787,7 +929,7 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 12,
     marginLeft: 4,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontFamily: 'monospace',
   },
   locationSeparator: {
     color: COLORS.muted,
@@ -846,10 +988,17 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   inputWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 20,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     backgroundColor: COLORS.background,
     padding: 16,
+  },
+  webInputWrapper: {
+    position: 'fixed',
   },
   locationStatusRow: {
     flexDirection: 'row',
@@ -867,7 +1016,7 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 12,
     marginLeft: 6,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontFamily: 'monospace',
   },
   locationStatusErrorText: {
     color: '#F59E0B',
